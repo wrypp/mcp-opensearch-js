@@ -790,11 +790,28 @@ function parseTimeRange(timeRange) {
   }
 }
 
-// Start the MCP server with stdio transport
+// Start the MCP server with stdio transport and handle errors
 debugLog('Starting MCP server with stdio transport');
-server.start({
-  transportType: "stdio"
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  if (error.code === 'ERR_UNHANDLED_ERROR' && error.context?.error?.code === -32001) {
+    console.error('MCP timeout error occurred. Consider:');
+    console.error('1. Increasing the defaultExecutionTimeoutMs in server configuration');
+    console.error('2. Checking if OpenSearch is responsive');
+    console.error('3. Reducing the complexity of your queries');
+  }
+  // Exit with error code
+  process.exit(1);
 });
 
-console.log('OpenSearch MCP Server running in stdio mode');
-console.log('To enable debug logging, set DEBUG=true in your .env file');
+try {
+  server.start({
+    transportType: "stdio"
+  });
+  console.log('OpenSearch MCP Server running in stdio mode');
+  console.log('To enable debug logging, set DEBUG=true in your .env file');
+} catch (error) {
+  console.error('Failed to start MCP server:', error);
+  process.exit(1);
+}
