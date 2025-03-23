@@ -1,0 +1,19 @@
+{
+  "name": "mcp-opensearch-js",
+  "version": "1.0.0",
+  "description": "FastMCP server for searching OpenSearch with Wazuh security logs",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "npx fastmcp dev index.js",
+    "inspect": "npx fastmcp inspect index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@opensearch-project/opensearch": "^2.5.0",
+    "dotenv": "^16.3.1",
+    "fastmcp": "^1.20.5",
+    "zod": "^3.24.2"
+  }
+}
