@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config();
 
-// Configure OpenSearch client
+// Configure OpenSearch client with increased timeout
 const client = new Client({
   // Get connection details from environment variables
   node: process.env.OPENSEARCH_URL || "https://localhost:9200",
@@ -18,14 +18,43 @@ const client = new Client({
   ssl: {
     rejectUnauthorized: false, // Set to true in production with proper certificates
   },
+  // Add increased timeouts to avoid MCP timeout errors
+  requestTimeout: 30000, // 30 seconds for API requests
+  connectionTimeout: 10000, // 10 seconds for initial connection
+  maxRetries: 3, // Allow retries on failure
 });
 
-// Initialize MCP Server
+// Initialize MCP Server with increased timeout
 const server = new FastMCP({
   name: "OpenSearch Security Analytics",
   version: "1.0.0",
   description: "MCP server for querying Wazuh security logs in OpenSearch",
+  // Increase the default MCP execution timeout
+  defaultExecutionTimeoutMs: 120000, // 2 minutes
 });
+
+// Helper function to safely execute OpenSearch queries
+async function safeOpenSearchQuery(operation, fallbackMessage) {
+  try {
+    return await operation();
+  } catch (error) {
+    console.error(`OpenSearch error: ${error.message}`, error);
+    
+    // Check for common OpenSearch errors
+    if (error.message.includes('timeout')) {
+      throw new UserError(`OpenSearch request timed out. The query may be too complex or the cluster is under heavy load.`);
+    } else if (error.message.includes('connect')) {
+      throw new UserError(`Cannot connect to OpenSearch. Please check your connection settings in .env file.`);
+    } else if (error.message.includes('no such index')) {
+      throw new UserError(`The specified index doesn't exist in OpenSearch.`);
+    } else if (error.message.includes('unauthorized')) {
+      throw new UserError(`Authentication failed with OpenSearch. Please check your credentials in .env file.`);
+    }
+    
+    // For any other errors
+    throw new UserError(fallbackMessage || `OpenSearch operation failed: ${error.message}`);
+  }
+}
 
 // Tool to list all available indexes
 server.addTool({
@@ -37,34 +66,44 @@ server.addTool({
   execute: async (args, { log }) => {
     log.info("Listing indexes", { pattern: args.pattern });
 
-    try {
+    return safeOpenSearchQuery(async () => {
       const response = await client.cat.indices({
         format: "json",
         index: args.pattern,
+        // Add timeout parameter to OpenSearch request
+        timeout: "30s",
       });
 
       const indexes = response.body;
       
-      if (indexes.length === 0) {
+      if (!indexes || indexes.length === 0) {
         return "No indexes found matching your pattern.";
       }
 
       // Sort indexes by size (descending)
-      indexes.sort((a, b) => parseInt(b.pri_store_size) - parseInt(a.pri_store_size));
+      indexes.sort((a, b) => {
+        // Handle missing or undefined values
+        const sizeA = a.pri?.store?.size ? parseInt(a.pri.store.size) : 0;
+        const sizeB = b.pri?.store?.size ? parseInt(b.pri.store.size) : 0;
+        return sizeB - sizeA;
+      });
 
       let resultText = `## Available Indexes (${indexes.length} total)\n\n`;
       resultText += "| Index | Docs Count | Size | Status | Health |\n";
       resultText += "|-------|------------|------|--------|--------|\n";
       
       indexes.forEach(idx => {
-        resultText += `| ${idx.index} | ${idx.docs?.count || 'N/A'} | ${idx.pri.store.size || 'N/A'} | ${idx.status} | ${idx.health} |\n`;
+        // Safely handle potentially missing fields
+        const docsCount = idx.docs?.count || 'N/A';
+        const size = idx.pri?.store?.size || 'N/A';
+        const status = idx.status || 'N/A';
+        const health = idx.health || 'N/A';
+        
+        resultText += `| ${idx.index} | ${docsCount} | ${size} | ${status} | ${health} |\n`;
       });
 
       return resultText;
-    } catch (error) {
-      log.error("Error listing indexes", { error: error.message });
-      throw new UserError(`Failed to list indexes: ${error.message}`);
-    }
+    }, "Failed to list OpenSearch indexes. Please check your connection and try again.");
   },
 });
 
@@ -87,7 +126,7 @@ server.addTool({
       timeRange: args.timeRange 
     });
 
-    try {
+    return safeOpenSearchQuery(async () => {
       const timeRangeMs = parseTimeRange(args.timeRange);
       const now = new Date();
       const from = new Date(now.getTime() - timeRangeMs);
@@ -102,7 +141,9 @@ server.addTool({
             ]
           }
         },
-        sort: [{ [args.timeField]: { order: "desc" } }]
+        sort: [{ [args.timeField]: { order: "desc" } }],
+        // Add timeout parameter directly in the query
+        timeout: "25s"
       };
 
       // Add time range if timeField is specified
@@ -128,8 +169,8 @@ server.addTool({
         body: queryBody
       });
 
-      const hits = response.body.hits.hits;
-      const total = response.body.hits.total.value;
+      const hits = response.body.hits.hits || [];
+      const total = response.body.hits.total?.value || 0;
 
       log.info(`Found ${total} matching logs`, { count: total });
 
@@ -166,10 +207,7 @@ server.addTool({
       });
 
       return resultText;
-    } catch (error) {
-      log.error("Error searching logs", { error: error.message });
-      throw new UserError(`Failed to search logs: ${error.message}`);
-    }
+    }, "Failed to search logs. Please check your query and connection settings.");
   },
 });
 
@@ -183,12 +221,17 @@ server.addTool({
   execute: async (args, { log }) => {
     log.info("Getting index mapping", { index: args.index });
 
-    try {
+    return safeOpenSearchQuery(async () => {
       const response = await client.indices.getMapping({
-        index: args.index
+        index: args.index,
+        timeout: "20s"
       });
 
       const mappings = response.body;
+      if (!mappings) {
+        return `No mappings found for index ${args.index}.`;
+      }
+      
       const indexName = Object.keys(mappings)[0];
       const properties = mappings[indexName]?.mappings?.properties || {};
       
@@ -227,10 +270,7 @@ server.addTool({
       processProperties(properties);
       
       return resultText;
-    } catch (error) {
-      log.error("Error getting index mapping", { error: error.message });
-      throw new UserError(`Failed to get index mapping: ${error.message}`);
-    }
+    }, `Failed to get mapping for index ${args.index}.`);
   },
 });
 
@@ -251,7 +291,7 @@ server.addTool({
       query: args.query 
     });
 
-    try {
+    return safeOpenSearchQuery(async () => {
       const response = await client.search({
         index: args.index,
         body: {
@@ -268,12 +308,13 @@ server.addTool({
                 size: args.maxValues
               }
             }
-          }
+          },
+          timeout: "25s"
         }
       });
 
       const buckets = response.body.aggregations?.field_values?.buckets || [];
-      const total = response.body.hits.total.value;
+      const total = response.body.hits.total?.value || 0;
       
       if (buckets.length === 0) {
         return `No values found for field "${args.field}" in index ${args.index}.\n\nPossible reasons:\n- The field does not exist\n- The field is not indexed for aggregations\n- No documents match your query\n- The field has no values`;
@@ -295,10 +336,7 @@ server.addTool({
       });
       
       return resultText;
-    } catch (error) {
-      log.error("Error exploring field values", { error: error.message });
-      throw new UserError(`Failed to explore field values: ${error.message}`);
-    }
+    }, `Failed to explore values for field "${args.field}" in index ${args.index}.`);
   },
 });
 
