@@ -18,33 +18,22 @@ A Model Context Protocol (MCP) server for querying and analyzing Wazuh security 
 
 ## Installation
 
-### Option 1: Use with npx (recommended)
+### Option 1: Use with npx directly from GitHub (recommended)
 
-You can run this tool directly using npx without installing it:
+You can run this tool directly using npx without cloning the repository:
 
 ```bash
-# Create a .env file with your OpenSearch connection details
-npx mcp-opensearch-js
+# Run the latest version from GitHub
+npx github:jetbalsa/mcp-opensearch-js
 
 # Run with debug mode enabled
-npx mcp-opensearch-js --debug
+npx github:jetbalsa/mcp-opensearch-js --debug
+
+# You can also specify a specific branch or commit
+npx github:jetbalsa/mcp-opensearch-js#main
 ```
 
-### Option 2: Global Installation
-
-Install the package globally:
-
-```bash
-npm install -g mcp-opensearch-js
-```
-
-Then run it from anywhere:
-
-```bash
-mcp-opensearch
-```
-
-### Option 3: Local Installation
+### Option 2: Local Installation
 
 1. Clone this repository:
 ```bash

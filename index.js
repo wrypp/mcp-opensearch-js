@@ -790,11 +790,6 @@ function parseTimeRange(timeRange) {
   }
 }
 
-// Add debug event listeners to monitor MCP server activity
-server.onAny((event, ...args) => {
-  debugLog(`MCP Event: ${event}`, ...args);
-});
-
 // Start the MCP server with stdio transport
 debugLog('Starting MCP server with stdio transport');
 server.start({
