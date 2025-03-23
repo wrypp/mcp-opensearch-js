@@ -3,9 +3,25 @@ import { FastMCP, UserError, imageContent } from "fastmcp";
 import { Client } from "@opensearch-project/opensearch";
 import { z } from "zod";
 import dotenv from 'dotenv';
+import util from 'util';
 
 // Load environment variables
 dotenv.config();
+
+// Configure debug logging
+const DEBUG = process.env.DEBUG === 'true' || process.env.DEBUG === '1';
+function debugLog(...args) {
+  if (DEBUG) {
+    const timestamp = new Date().toISOString();
+    const formattedArgs = args.map(arg => 
+      typeof arg === 'object' ? util.inspect(arg, { depth: 3, colors: true }) : arg
+    );
+    console.error(`[${timestamp}] [DEBUG]`, ...formattedArgs);
+  }
+}
+
+console.log('Starting OpenSearch MCP Server (stdio mode)');
+debugLog('Debug logging enabled');
 
 // Configure OpenSearch client with increased timeout
 const client = new Client({
@@ -24,6 +40,13 @@ const client = new Client({
   maxRetries: 3, // Allow retries on failure
 });
 
+debugLog('OpenSearch client configured with:', {
+  node: process.env.OPENSEARCH_URL || "https://localhost:9200",
+  requestTimeout: 30000,
+  connectionTimeout: 10000,
+  maxRetries: 3
+});
+
 // Initialize MCP Server with increased timeout
 const server = new FastMCP({
   name: "OpenSearch Security Analytics",
@@ -33,12 +56,18 @@ const server = new FastMCP({
   defaultExecutionTimeoutMs: 120000, // 2 minutes
 });
 
+debugLog('MCP Server initialized with timeout:', 120000);
+
 // Helper function to safely execute OpenSearch queries
 async function safeOpenSearchQuery(operation, fallbackMessage) {
   try {
-    return await operation();
+    debugLog('Executing OpenSearch query');
+    const result = await operation();
+    debugLog('OpenSearch query completed successfully');
+    return result;
   } catch (error) {
     console.error(`OpenSearch error: ${error.message}`, error);
+    debugLog('OpenSearch query failed:', error);
     
     // Check for common OpenSearch errors
     if (error.message.includes('timeout')) {
@@ -359,13 +388,13 @@ server.addTool({
 
     // This is a simulated implementation since real-time monitoring
     // would require a persistent connection
-    try {
-      reportProgress({
-        progress: 10,
-        total: 100,
-        message: "Preparing log monitoring..."
-      });
+    reportProgress({
+      progress: 10,
+      total: 100,
+      message: "Preparing log monitoring..."
+    });
 
+    return safeOpenSearchQuery(async () => {
       // Get an initial set of logs
       const response = await client.search({
         index: args.index,
@@ -378,11 +407,12 @@ server.addTool({
           },
           sort: [
             { "@timestamp": { order: "desc" } }
-          ]
+          ],
+          timeout: "20s"
         }
       });
 
-      const hits = response.body.hits.hits;
+      const hits = response.body.hits.hits || [];
       reportProgress({
         progress: 100,
         total: 100,
@@ -405,15 +435,32 @@ server.addTool({
       // Display results in a readable format
       hits.forEach((hit, i) => {
         const source = hit._source;
-        resultText += `**Log ${i+1}** (${new Date(source['@timestamp'] || source.timestamp).toLocaleString()}):\n`;
+        // Safely access timestamp fields
+        const timestamp = source['@timestamp'] || source.timestamp;
+        const timeDisplay = timestamp ? new Date(timestamp).toLocaleString() : 'Unknown time';
+        
+        resultText += `**Log ${i+1}** (${timeDisplay}):\n`;
         
         // Show a summary with key fields
         const importantFields = ['message', 'level', 'logger_name', 'status', 'method', 'path'];
+        let foundFields = false;
+        
         importantFields.forEach(field => {
           if (source[field]) {
             resultText += `- **${field}**: ${source[field]}\n`;
+            foundFields = true;
           }
         });
+        
+        // If none of the important fields were found, show the first few fields
+        if (!foundFields) {
+          Object.entries(source)
+            .filter(([key]) => typeof source[key] !== 'object' && key !== '@timestamp' && key !== 'timestamp')
+            .slice(0, 3)
+            .forEach(([key, value]) => {
+              resultText += `- **${key}**: ${value}\n`;
+            });
+        }
         
         resultText += '\n';
       });
@@ -421,10 +468,7 @@ server.addTool({
       resultText += `\nTo set up real monitoring, you could use the OpenSearch _search API with a persistent connection or implement a polling mechanism in your application.`;
       
       return resultText;
-    } catch (error) {
-      log.error("Error monitoring logs", { error: error.message });
-      throw new UserError(`Failed to monitor logs: ${error.message}`);
-    }
+    }, `Failed to monitor logs for index ${args.index}. The index may not exist or the connection timed out.`);
   },
 });
 
@@ -441,7 +485,7 @@ server.addTool({
   execute: async (args, { log }) => {
     log.info("Searching alerts", { query: args.query, timeRange: args.timeRange });
 
-    try {
+    return safeOpenSearchQuery(async () => {
       const timeRangeMs = parseTimeRange(args.timeRange);
       const now = new Date();
       const from = new Date(now.getTime() - timeRangeMs);
@@ -466,11 +510,12 @@ server.addTool({
             },
           },
           sort: [{ timestamp: { order: "desc" } }],
+          timeout: "25s"
         },
       });
 
-      const hits = response.body.hits.hits;
-      const total = response.body.hits.total.value;
+      const hits = response.body.hits.hits || [];
+      const total = response.body.hits.total?.value || 0;
 
       log.info(`Found ${total} matching alerts`, { count: total });
 
@@ -503,10 +548,7 @@ server.addTool({
       });
 
       return resultText;
-    } catch (error) {
-      log.error("Error searching alerts", { error: error.message });
-      throw new UserError(`Failed to search alerts: ${error.message}`);
-    }
+    }, "Failed to search alerts. The query may be invalid or the server connection timed out.");
   },
 });
 
@@ -521,19 +563,17 @@ server.addTool({
   execute: async (args, { log }) => {
     log.info("Getting alert details", { id: args.id });
 
-    try {
+    return safeOpenSearchQuery(async () => {
       const response = await client.get({
         index: args.index,
         id: args.id,
+        timeout: "15s"
       });
 
       const source = response.body._source;
       
       return `## Alert Details\n\n\`\`\`json\n${JSON.stringify(source, null, 2)}\n\`\`\``;
-    } catch (error) {
-      log.error("Error getting alert details", { error: error.message });
-      throw new UserError(`Failed to get alert details: ${error.message}`);
-    }
+    }, `Failed to get details for alert ID ${args.id}. The alert may not exist or the connection timed out.`);
   },
 });
 
@@ -549,7 +589,7 @@ server.addTool({
   execute: async (args, { log }) => {
     log.info("Getting alert statistics", { timeRange: args.timeRange, field: args.field });
 
-    try {
+    return safeOpenSearchQuery(async () => {
       const timeRangeMs = parseTimeRange(args.timeRange);
       const now = new Date();
       const from = new Date(now.getTime() - timeRangeMs);
@@ -574,10 +614,11 @@ server.addTool({
               },
             },
           },
+          timeout: "25s"
         },
       });
 
-      const buckets = response.body.aggregations.stats.buckets;
+      const buckets = response.body.aggregations?.stats?.buckets || [];
       const total = buckets.reduce((sum, bucket) => sum + bucket.doc_count, 0);
 
       log.info(`Found statistics for ${total} alerts`, { count: total });
@@ -596,10 +637,7 @@ server.addTool({
       });
 
       return resultText;
-    } catch (error) {
-      log.error("Error getting alert statistics", { error: error.message });
-      throw new UserError(`Failed to get alert statistics: ${error.message}`);
-    }
+    }, `Failed to get alert statistics. The field "${args.field}" may not be aggregatable or the connection timed out.`);
   },
 });
 
@@ -623,9 +661,10 @@ server.addTool({
     reportProgress({
       progress: 0,
       total: 100,
+      message: "Starting visualization generation..."
     });
 
-    try {
+    return safeOpenSearchQuery(async () => {
       const timeRangeMs = parseTimeRange(args.timeRange);
       const now = new Date();
       const from = new Date(now.getTime() - timeRangeMs);
@@ -633,6 +672,7 @@ server.addTool({
       reportProgress({
         progress: 30,
         total: 100,
+        message: "Querying OpenSearch..."
       });
 
       const response = await client.search({
@@ -671,19 +711,23 @@ server.addTool({
               },
             },
           },
+          timeout: "45s" // Longer timeout for visualization requests
         },
       });
 
       reportProgress({
         progress: 70,
         total: 100,
+        message: "Processing visualization data..."
       });
 
-      const buckets = response.body.aggregations.alerts_over_time.buckets;
+      const buckets = response.body.aggregations?.alerts_over_time?.buckets || [];
       
-      // You could generate a real chart image here using a library like ChartJS
-      // For now, we'll return a text-based visualization
+      if (buckets.length === 0) {
+        return "No data available for visualization in the specified time range.";
+      }
       
+      // Generate visualization from data
       const timePoints = buckets.map(b => b.key_as_string.split(' ')[0]);
       const counts = buckets.map(b => b.doc_count);
       
@@ -715,13 +759,11 @@ server.addTool({
       reportProgress({
         progress: 100,
         total: 100,
+        message: "Visualization complete"
       });
 
       return resultText;
-    } catch (error) {
-      log.error("Error generating visualization", { error: error.message });
-      throw new UserError(`Failed to generate visualization: ${error.message}`);
-    }
+    }, "Failed to generate alert visualization. The query may be too complex or the connection timed out.");
   },
 });
 
@@ -729,6 +771,8 @@ server.addTool({
 function parseTimeRange(timeRange) {
   const unit = timeRange.slice(-1);
   const value = parseInt(timeRange.slice(0, -1));
+  
+  debugLog('Parsing time range:', timeRange, 'to milliseconds');
   
   switch (unit) {
     case 'h':
@@ -740,17 +784,22 @@ function parseTimeRange(timeRange) {
     case 'm':
       return value * 30 * 24 * 60 * 60 * 1000; // months to ms (approximate)
     default:
-      throw new Error(`Invalid time range format: ${timeRange}`);
+      const error = `Invalid time range format: ${timeRange}`;
+      debugLog('Error:', error);
+      throw new Error(error);
   }
 }
 
-// Start the MCP server
-server.start({
-  transportType: "sse",
-  sse: {
-    endpoint: "/sse",
-    port: parseInt(process.env.PORT || "3000"),
-  },
+// Add debug event listeners to monitor MCP server activity
+server.onAny((event, ...args) => {
+  debugLog(`MCP Event: ${event}`, ...args);
 });
 
-console.log(`OpenSearch MCP Server running at http://localhost:${process.env.PORT || 3000}/sse`);
+// Start the MCP server with stdio transport
+debugLog('Starting MCP server with stdio transport');
+server.start({
+  transportType: "stdio"
+});
+
+console.log('OpenSearch MCP Server running in stdio mode');
+console.log('To enable debug logging, set DEBUG=true in your .env file');

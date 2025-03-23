@@ -4,10 +4,15 @@
   "description": "FastMCP server for searching OpenSearch with Wazuh security logs",
   "main": "index.js",
   "type": "module",
+  "bin": {
+    "mcp-opensearch": "./bin/cli.js"
+  },
   "scripts": {
     "start": "node index.js",
     "dev": "npx fastmcp dev index.js",
     "inspect": "npx fastmcp inspect index.js",
+    "stdio": "node index.js",
+    "stdio:debug": "DEBUG=true node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
@@ -15,5 +20,22 @@
     "dotenv": "^16.3.1",
     "fastmcp": "^1.20.5",
     "zod": "^3.24.2"
+  },
+  "keywords": [
+    "opensearch",
+    "mcp",
+    "wazuh",
+    "security",
+    "logs",
+    "fastmcp"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jetbalsa/mcp-opensearch-js"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }
