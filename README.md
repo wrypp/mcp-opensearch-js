@@ -24,20 +24,20 @@ You can run this tool directly using npx without cloning the repository:
 
 ```bash
 # Run the latest version from GitHub
-npx github:jetbalsa/mcp-opensearch-js
+npx github:wrypp/mcp-opensearch-js
 
 # Run with debug mode enabled
-npx github:jetbalsa/mcp-opensearch-js --debug
+npx github:wrypp/mcp-opensearch-js --debug
 
 # You can also specify a specific branch or commit
-npx github:jetbalsa/mcp-opensearch-js#main
+npx github:wrypp/mcp-opensearch-js#main
 ```
 
 ### Option 2: Local Installation
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/jetbalsa/mcp-opensearch-js.git
+git clone https://github.com/wrypp/mcp-opensearch-js.git
 cd mcp-opensearch-js
 ```
 
