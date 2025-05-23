@@ -20,7 +20,8 @@ function debugLog(...args) {
   }
 }
 
-console.log('Starting OpenSearch MCP Server (stdio mode)');
+// Use console.error instead of console.log for non-protocol messages
+console.error('Starting OpenSearch MCP Server (stdio mode)');
 debugLog('Debug logging enabled');
 
 // Configure OpenSearch client with increased timeout
@@ -809,8 +810,8 @@ try {
   server.start({
     transportType: "stdio"
   });
-  console.log('OpenSearch MCP Server running in stdio mode');
-  console.log('To enable debug logging, set DEBUG=true in your .env file');
+  console.error('OpenSearch MCP Server running in stdio mode');
+  console.error('To enable debug logging, set DEBUG=true in your .env file');
 } catch (error) {
   console.error('Failed to start MCP server:', error);
   process.exit(1);
